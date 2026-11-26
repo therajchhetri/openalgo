@@ -17,9 +17,11 @@ as before, so a server with either of them sees no change.
 
 The whole updater runs here, against a fake server: real git checkouts of a
 local origin, and small scripts on PATH standing in for sudo, systemctl, uv,
-nginx, chown and npm that record every call. The fixed paths in the script
-(/var/python, the systemd folder, the nginx folder) are rewritten to folders
-under the test's own temporary directory. Linux only.
+nginx, chown, npm and a browser that record every call. The package managers and
+downloaders are stand-ins too, and they refuse, so nothing is installed on the
+machine running the tests. The fixed paths in the script (/var/python, the
+systemd folder, the nginx folder) are rewritten to folders under the test's own
+temporary directory. Linux only.
 """
 
 from __future__ import annotations
@@ -83,7 +85,24 @@ exit 0
 echo "npm $*" >> "$SHIM_STATE/calls.log"
 exit 0
 """,
+    # A server that already has a browser, so the updater's Telegram /chart step finds
+    # one and installs nothing.
+    "chrome": r"""#!/bin/bash
+echo "chrome $*" >> "$SHIM_STATE/calls.log"
+exit 0
+""",
 }
+
+# The sudo shim runs the real command, so anything the updater could reach that changes the
+# host (package managers, downloaders) is recorded and refused instead. A step that tries
+# to install or download then fails inside the test, not on the machine running it.
+REFUSED = ("apt-get", "apt-cache", "dpkg", "dnf", "yum", "pacman", "snap", "curl", "wget")
+SHIMS.update(
+    {
+        name: f'#!/bin/bash\necho "{name} $*" >> "$SHIM_STATE/calls.log"\nexit 1\n'
+        for name in REFUSED
+    }
+)
 
 GIT = ["git", "-c", "user.name=OpenAlgo Test", "-c", "user.email=test@example.invalid"]
 
@@ -362,6 +381,24 @@ def test_the_install_sh_layout_is_updated_as_before_even_beside_instances(box):
     assert box.calls("uv ") == [
         f"uv pip install --python {simple}/.venv/bin/python -r {simple}/requirements-nginx.txt"
     ]
+
+
+def test_a_server_update_installs_nothing_on_the_host(box):
+    """A server update finds the stand-in browser and installs nothing.
+
+    The updater installs a browser for Telegram /chart when it finds none, and the
+    sudo shim runs the real command. Without a stand-in browser every server-mode test
+    here downloaded Google Chrome and, run as root, installed it on the machine
+    running the tests.
+    """
+    simple = box.simple()
+
+    result = box.run(simple / "install" / "update.sh", cwd=simple)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Telegram /chart browser: {(box.bin / 'chrome').resolve()}" in result.stdout
+    refused = tuple(f"{name} " for name in REFUSED)
+    assert [line for line in box.calls() if line.startswith(refused)] == []
 
 
 def test_the_legacy_layout_is_updated_as_before_even_beside_instances(box):
