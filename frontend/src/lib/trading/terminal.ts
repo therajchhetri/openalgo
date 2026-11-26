@@ -6866,8 +6866,9 @@ export class TradingTerminal {
 
     // A bare leg inherits the exchange of whatever the pane showed before,
     // which is what a trader typing `NIFTY/RELIANCE` means. Remembered here so
-    // every later repair resolves the legs the same way the load did.
-    if (!this.sym?.synthetic) this.exprLegExchange = this.sym?.exchange || 'NSE'
+    // every later repair resolves the legs the same way the load did. Before
+    // anything has loaded, it keeps the venue the pane was restored with.
+    if (this.sym && !this.sym.synthetic) this.exprLegExchange = this.sym.exchange || 'NSE'
     const to = this.gridNow()
     const request = {
       symbol: source,
@@ -6920,6 +6921,12 @@ export class TradingTerminal {
       productOptions: [],
       product: '',
     }
+    // A refresh must reopen the computed chart, and its bare legs on the venue
+    // they were resolved against.
+    this.lsSet(
+      'symbol',
+      JSON.stringify({ symbol: source, exchange: '', legExchange: this.exprLegExchange })
+    )
     this.rawBars = [...bars]
     this.lastLtp = null
     this.liveBucket = null
@@ -8030,8 +8037,17 @@ export class TradingTerminal {
       const saved = JSON.parse(this.lsGet('symbol') || 'null') as {
         symbol?: string
         exchange?: string
+        legExchange?: string
       } | null
-      if (saved?.symbol) {
+      if (saved?.symbol && !saved.exchange && isChartExpression(saved.symbol)) {
+        // A computed chart has no instrument row to search for.
+        if (typeof saved.legExchange === 'string' && saved.legExchange)
+          this.exprLegExchange = saved.legExchange
+        loaded = await this.loadSymbol(
+          { symbol: saved.symbol, exchange: '', expression: true },
+          { silent: true }
+        )
+      } else if (saved?.symbol) {
         const rows = await this.search(saved.symbol, saved.exchange)
         const row = rows.find((r) => r.symbol === saved.symbol && r.exchange === saved.exchange)
         if (row) loaded = await this.loadSymbol(row, { silent: true })
