@@ -1,5 +1,6 @@
 import { Minus, Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { StrikeSelectContent } from '@/components/strategy-builder/StrikeSelectContent'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -206,13 +207,7 @@ export function TemplateDialog({
                   >
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    {strikes.map((s) => (
-                      <SelectItem key={s} value={String(s)}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
+                  <StrikeSelectContent strikes={strikes} />
                 </Select>
                 <span className="text-xs font-semibold">{leg.optionType}</span>
                 {moneyness && (

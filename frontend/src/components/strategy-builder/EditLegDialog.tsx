@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { ResolveLegContract } from '@/components/strategy-builder/ManualLegBuilder'
+import { StrikeSelectContent } from '@/components/strategy-builder/StrikeSelectContent'
 import { parseFinitePrice, type ResolvedLegMarket } from '@/lib/strategyContracts'
 import type { StrategyLeg } from '@/lib/strategyMath'
 import { strikeMoneyness } from '@/lib/strategyMath'
@@ -260,13 +261,7 @@ export function EditLegDialog({
                   <SelectTrigger aria-label="Strike" className="h-10 text-sm font-semibold">
                     <SelectValue placeholder="Strike" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {strikes.map((s) => (
-                      <SelectItem key={s} value={String(s)}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
+                  <StrikeSelectContent strikes={strikes} />
                 </Select>
                 {(() => {
                   const m = strikeMoneyness(strike, atmStrike, strikeStep, optionType)

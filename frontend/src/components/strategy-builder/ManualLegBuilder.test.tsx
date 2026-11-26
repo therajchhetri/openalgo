@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ListedOptionChainResponse, ResolvedLegMarket } from '@/lib/strategyContracts'
+import type { OptionStrike } from '@/types/option-chain'
 import { ManualLegBuilder, type ManualLegBuilderProps } from './ManualLegBuilder'
 
 interface Deferred<T> {
@@ -116,8 +117,28 @@ async function choose(selectName: string, optionName: string) {
   fireEvent.click(await screen.findByRole('option', { name: optionName }))
 }
 
+/**
+ * A live chain with its own fresh object and fresh strike rows, as every live
+ * tick delivers. Only the 24600 row carries a quote, so the price is the one
+ * thing that differs between two ticks.
+ */
+function tickChain(strikes: number[], ltp: number): ListedOptionChainResponse {
+  const base = liveChain({ ltp })
+  const quoted = base.chain[0]
+  const rows: OptionStrike[] = strikes.map((strike) =>
+    strike === quoted.strike ? { ...quoted } : { strike, ce: null, pe: null }
+  )
+  return { ...base, chain: rows }
+}
+
+const STRIKES = [24_400, 24_500, 24_600, 24_700, 24_800]
+
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('ManualLegBuilder listed contracts', () => {
@@ -291,5 +312,101 @@ describe('ManualLegBuilder listed contracts', () => {
         price: 25_142,
       })
     )
+  })
+})
+
+describe('ManualLegBuilder open strike list', () => {
+  async function openStrikeList() {
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Strike' }), { key: 'ArrowDown' })
+    return screen.findByRole('listbox')
+  }
+
+  it('does not scroll the open strike list back when a live tick brings a new chain object', async () => {
+    // Radix item-aligned positioning assigns viewport.scrollTop every time the
+    // open content re-renders, which snaps a list the trader is scrolling back
+    // to the selected strike. The setter is the observable signal for that.
+    const scrollTopSet = vi.spyOn(Element.prototype, 'scrollTop', 'set')
+    const initialProps = props({ liveChain: tickChain(STRIKES, 125), atmStrike: 24_600 })
+    const view = render(<ManualLegBuilder {...initialProps} />)
+    await screen.findByText('NIFTY13AUG2624600CE')
+
+    await openStrikeList()
+    // Guard against a vacuous pass: opening the list does position it, so the
+    // spy must have seen the setter by now in this very setup.
+    expect(scrollTopSet).toHaveBeenCalled()
+    scrollTopSet.mockClear()
+
+    view.rerender(<ManualLegBuilder {...initialProps} liveChain={tickChain(STRIKES, 140)} />)
+    await act(async () => {})
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(STRIKES.length)
+    expect(scrollTopSet).not.toHaveBeenCalled()
+  })
+
+  it('does not scroll the open strike list back across several consecutive ticks', async () => {
+    const scrollTopSet = vi.spyOn(Element.prototype, 'scrollTop', 'set')
+    const initialProps = props({ liveChain: tickChain(STRIKES, 125), atmStrike: 24_600 })
+    const view = render(<ManualLegBuilder {...initialProps} />)
+    await screen.findByText('NIFTY13AUG2624600CE')
+    await openStrikeList()
+    scrollTopSet.mockClear()
+
+    for (const ltp of [126, 127, 128]) {
+      view.rerender(<ManualLegBuilder {...initialProps} liveChain={tickChain(STRIKES, ltp)} />)
+      await act(async () => {})
+    }
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(scrollTopSet).not.toHaveBeenCalled()
+  })
+
+  it('shows the new strikes in the open list when the strikes themselves change', async () => {
+    const initialProps = props({ liveChain: tickChain(STRIKES, 125), atmStrike: 24_600 })
+    const view = render(<ManualLegBuilder {...initialProps} />)
+    await screen.findByText('NIFTY13AUG2624600CE')
+    await openStrikeList()
+    expect(screen.getByRole('option', { name: /24400/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /24650/ })).not.toBeInTheDocument()
+
+    view.rerender(
+      <ManualLegBuilder
+        {...initialProps}
+        liveChain={tickChain([24_500, 24_600, 24_650, 24_700], 125)}
+      />
+    )
+
+    expect(await screen.findByRole('option', { name: /24650/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /24400/ })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(4)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+  })
+
+  it('updates the moneyness shown for the selected strike when ATM or option type changes', async () => {
+    // The strikes never change here, so only the moneyness inputs of the memoised
+    // list can make the selected item's label (shown in the trigger) move.
+    const initialProps = props({
+      liveChain: tickChain(STRIKES, 125),
+      atmStrike: 24_600,
+      strikeStep: 100,
+    })
+    const view = render(<ManualLegBuilder {...initialProps} />)
+    await screen.findByText('NIFTY13AUG2624600CE')
+    const trigger = screen.getByRole('combobox', { name: 'Strike' })
+    expect(trigger).toHaveTextContent(/ATM/)
+
+    view.rerender(
+      <ManualLegBuilder
+        {...initialProps}
+        atmStrike={24_700}
+        liveChain={{ ...tickChain(STRIKES, 125), atm_strike: 24_700 }}
+      />
+    )
+    await waitFor(() => expect(trigger).toHaveTextContent(/ITM/))
+    expect(trigger).not.toHaveTextContent(/ATM/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'PE' }))
+    await waitFor(() => expect(trigger).toHaveTextContent(/OTM/))
+    expect(trigger).not.toHaveTextContent(/ITM/)
   })
 })

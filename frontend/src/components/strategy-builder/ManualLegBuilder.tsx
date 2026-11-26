@@ -1,5 +1,6 @@
 import { ListPlus, Minus, Plus, PlusCircle } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { StrikeSelectContent } from '@/components/strategy-builder/StrikeSelectContent'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -396,28 +397,10 @@ export function ManualLegBuilder({
                 >
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
-                <SelectContent>
-                  {strikeOptions.map((s) => {
-                    const m = strikeMoneyness(s, selectionAtmStrike, strikeStep, optionType)
-                    return (
-                      <SelectItem key={s} value={String(s)}>
-                        <span className="tabular-nums">{s}</span>
-                        {m && (
-                          <span
-                            className={cn(
-                              'ml-2 text-[9px] font-semibold uppercase tracking-wider',
-                              m.kind === 'ATM' && 'text-amber-600 dark:text-amber-400',
-                              m.kind === 'ITM' && 'text-sky-600 dark:text-sky-400',
-                              m.kind === 'OTM' && 'text-muted-foreground'
-                            )}
-                          >
-                            {m.label}
-                          </span>
-                        )}
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
+                <StrikeSelectContent
+                  strikes={strikeOptions}
+                  moneyness={{ atmStrike: selectionAtmStrike, strikeStep, optionType }}
+                />
               </Select>
             </div>
 

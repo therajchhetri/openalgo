@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ResolvedLegMarket } from '@/lib/strategyContracts'
 import type { StrategyLeg } from '@/lib/strategyMath'
-import { EditLegDialog } from './EditLegDialog'
+import type { OptionStrike } from '@/types/option-chain'
+import { EditLegDialog, type EditLegDialogProps } from './EditLegDialog'
 
 const original: StrategyLeg = {
   id: 'leg-1',
@@ -82,6 +83,10 @@ async function chooseInDialog(selectName: string, optionName: string) {
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('EditLegDialog listed contracts and price validation', () => {
@@ -269,5 +274,96 @@ describe('EditLegDialog listed contracts and price validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Modify' }))
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ exitPrice: 0 }))
+  })
+})
+
+describe('EditLegDialog open strike list', () => {
+  const STRIKES = [23_800, 23_900, 24_000, 24_100, 24_200]
+
+  /** Fresh array and fresh rows each call, as every live chain tick delivers. */
+  function freshChain(strikes: number[]): OptionStrike[] {
+    return strikes.map((strike) => ({ strike, ce: null, pe: null }))
+  }
+
+  function dialogProps(chain: OptionStrike[]): EditLegDialogProps {
+    return {
+      open: true,
+      onOpenChange: vi.fn(),
+      leg: original,
+      optionExpiries: ['04AUG26', '18AUG26'],
+      futureExpiries: ['27AUG26'],
+      chain,
+      atmStrike: 24_000,
+      strikeStep: 100,
+      resolveContract: vi.fn(async () => market()),
+      onSave: vi.fn(),
+      onDelete: vi.fn(),
+    }
+  }
+
+  async function openStrikeList() {
+    const dialog = screen.getByRole('dialog', { name: 'Edit Position' })
+    fireEvent.keyDown(within(dialog).getByRole('combobox', { name: 'Strike' }), {
+      key: 'ArrowDown',
+    })
+    return screen.findByRole('listbox')
+  }
+
+  it('does not scroll the open strike list back when the parent passes a new chain array', async () => {
+    // Radix item-aligned positioning assigns viewport.scrollTop every time the
+    // open content re-renders, which snaps a list the trader is scrolling back
+    // to the selected strike. The setter is the observable signal for that.
+    const scrollTopSet = vi.spyOn(Element.prototype, 'scrollTop', 'set')
+    const baseProps = dialogProps(freshChain(STRIKES))
+    const view = render(<EditLegDialog {...baseProps} />)
+    await screen.findByText(original.symbol)
+
+    await openStrikeList()
+    // Guard against a vacuous pass: opening the list does position it, so the
+    // spy must have seen the setter by now in this very setup.
+    expect(scrollTopSet).toHaveBeenCalled()
+    scrollTopSet.mockClear()
+
+    view.rerender(<EditLegDialog {...baseProps} chain={freshChain(STRIKES)} />)
+    await act(async () => {})
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(STRIKES.length)
+    expect(scrollTopSet).not.toHaveBeenCalled()
+  })
+
+  it('does not scroll the open strike list back across several consecutive chain ticks', async () => {
+    const scrollTopSet = vi.spyOn(Element.prototype, 'scrollTop', 'set')
+    const baseProps = dialogProps(freshChain(STRIKES))
+    const view = render(<EditLegDialog {...baseProps} />)
+    await screen.findByText(original.symbol)
+    await openStrikeList()
+    scrollTopSet.mockClear()
+
+    for (let tick = 0; tick < 3; tick += 1) {
+      view.rerender(<EditLegDialog {...baseProps} chain={freshChain(STRIKES)} />)
+      await act(async () => {})
+    }
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(scrollTopSet).not.toHaveBeenCalled()
+  })
+
+  it('shows the new strikes in the open list when the strikes themselves change', async () => {
+    const baseProps = dialogProps(freshChain(STRIKES))
+    const view = render(<EditLegDialog {...baseProps} />)
+    await screen.findByText(original.symbol)
+    await openStrikeList()
+    expect(screen.getByRole('option', { name: '23800' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '24050' })).not.toBeInTheDocument()
+
+    view.rerender(
+      <EditLegDialog {...baseProps} chain={freshChain([23_900, 24_000, 24_050, 24_100])} />
+    )
+
+    expect(await screen.findByRole('option', { name: '24050' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '23800' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(4)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
   })
 })
